@@ -63,7 +63,10 @@ export async function* streamScore(
             yield { type: "meta", data: JSON.parse(raw) as ScoreMeta };
           } else if (currentEvent === "note") {
             yield { type: "note", data: JSON.parse(raw) as Note };
-          } else if (currentEvent === "done" || currentEvent === "error") {
+          } else if (currentEvent === "error") {
+            const parsed = JSON.parse(raw) as { detail?: string };
+            throw new Error(parsed.detail ?? "Unknown stream error");
+          } else if (currentEvent === "done") {
             return;
           }
           currentEvent = "";
