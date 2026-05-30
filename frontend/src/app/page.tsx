@@ -3,9 +3,25 @@
 import { useRef, useState } from "react";
 
 import { PianoRoll } from "@/components/piano-roll";
-import { generateScore } from "@/lib/api";
-import { playScore, stopPlayback } from "@/lib/player";
+import { streamScore } from "@/lib/api";
+import {
+  getPlayheadSeconds,
+  playScore,
+  preparePlayback,
+  primeAudioContext,
+  scheduleNote,
+  stopPlayback,
+} from "@/lib/player";
 import type { MusicScore } from "@/lib/types";
+
+// Duration as a fraction of a whole note — mirrors player.ts WHOLE_NOTE_FRACTION.
+const DUR_FRAC: Record<string, number> = {
+  whole: 1,
+  half: 0.5,
+  quarter: 0.25,
+  eighth: 0.125,
+  sixteenth: 0.0625,
+};
 
 export default function Home() {
   const [prompt, setPrompt] = useState("");
@@ -15,19 +31,64 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const playTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  function clearPlayTimeout() {
+    if (playTimeoutRef.current) clearTimeout(playTimeoutRef.current);
+  }
+
+  function scheduleStop(endSec: number) {
+    clearPlayTimeout();
+    const elapsed = getPlayheadSeconds() ?? 0;
+    const remaining = Math.max(0, endSec - elapsed);
+    playTimeoutRef.current = setTimeout(
+      () => setIsPlaying(false),
+      remaining * 1000 + 200,
+    );
+  }
+
   async function onGenerate() {
     if (!prompt.trim()) return;
+
+    primeAudioContext(); // synchronous — registers browser gesture before any awaits
+
+    clearPlayTimeout();
+    stopPlayback();
     setLoading(true);
     setError(null);
     setScore(null);
-    stopPlayback();
     setIsPlaying(false);
-    if (playTimeoutRef.current) clearTimeout(playTimeoutRef.current);
+
+    let tempo = 120;
+    let denominator = 4;
+    let startTime: number | null = null;
+    let lastEndSec = 0;
+
     try {
-      const result = await generateScore(prompt);
-      setScore(result);
+      for await (const event of streamScore(prompt)) {
+        if (event.type === "meta") {
+          tempo = event.data.tempo;
+          denominator = event.data.time_signature.denominator;
+          setScore({ ...event.data, notes: [] });
+          startTime = await preparePlayback();
+          setIsPlaying(true);
+        } else if (event.type === "note" && startTime !== null) {
+          const note = event.data;
+          setScore((prev) =>
+            prev ? { ...prev, notes: [...prev.notes, note] } : prev,
+          );
+          scheduleNote(note, tempo, denominator, startTime);
+          const widthBeats =
+            (DUR_FRAC[note.duration] ?? 0.25) *
+            denominator *
+            (note.dotted ? 1.5 : 1);
+          const endSec = (note.start_beat + widthBeats) * (60 / tempo);
+          if (endSec > lastEndSec) lastEndSec = endSec;
+        }
+      }
+
+      if (startTime !== null) scheduleStop(lastEndSec);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
+      setIsPlaying(false);
     } finally {
       setLoading(false);
     }
@@ -35,14 +96,11 @@ export default function Home() {
 
   async function onPlay() {
     if (!score) return;
-    if (playTimeoutRef.current) clearTimeout(playTimeoutRef.current);
+    clearPlayTimeout();
     try {
       setIsPlaying(true);
       const endTime = await playScore(score);
-      playTimeoutRef.current = setTimeout(
-        () => setIsPlaying(false),
-        endTime * 1000 + 200,
-      );
+      scheduleStop(endTime);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       setIsPlaying(false);
@@ -50,7 +108,7 @@ export default function Home() {
   }
 
   function onStop() {
-    if (playTimeoutRef.current) clearTimeout(playTimeoutRef.current);
+    clearPlayTimeout();
     stopPlayback();
     setIsPlaying(false);
   }

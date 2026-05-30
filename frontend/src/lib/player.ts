@@ -69,3 +69,36 @@ export function getPlayheadSeconds(): number | null {
   if (playStartToneTime === null) return null;
   return Math.max(0, Tone.now() - playStartToneTime);
 }
+
+// Call synchronously from a click handler to register the browser gesture and
+// unlock the AudioContext before any async work begins.
+export function primeAudioContext(): void {
+  Tone.start();
+}
+
+// Call once the stream metadata arrives. Awaits AudioContext unlock, clears any
+// previous playback, records the start clock, and returns the Tone.js start time.
+export async function preparePlayback(): Promise<number> {
+  await Tone.start();
+  if (synth) synth.releaseAll();
+  const startTime = Tone.now() + 0.1;
+  playStartToneTime = startTime;
+  return startTime;
+}
+
+// Schedule a single note relative to startToneTime (from preparePlayback).
+// No-ops silently if the note's start time has already passed.
+export function scheduleNote(
+  note: Note,
+  tempo: number,
+  denominator: number,
+  startToneTime: number,
+): void {
+  if (note.pitch === "rest") return;
+  const startSec = note.start_beat * (60 / tempo);
+  const durSec = durationInSeconds(note, tempo, denominator);
+  const absTime = startToneTime + startSec;
+  if (absTime > Tone.now()) {
+    getSynth().triggerAttackRelease(note.pitch, durSec, absTime);
+  }
+}
