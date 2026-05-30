@@ -50,10 +50,8 @@ export function PianoRoll({
     .map((n) => parseMidi(n.pitch))
     .filter((m): m is number => m !== null);
 
-  if (midis.length === 0) return null;
-
-  const maxMidi = Math.max(...midis) + PADDING_SEMI;
-  const minMidi = Math.min(...midis) - PADDING_SEMI;
+  const maxMidi = midis.length > 0 ? Math.max(...midis) + PADDING_SEMI : 60 + PADDING_SEMI;
+  const minMidi = midis.length > 0 ? Math.min(...midis) - PADDING_SEMI : 60 - PADDING_SEMI;
   const numSemis = maxMidi - minMidi + 1;
 
   let totalBeats = 0;
@@ -91,6 +89,8 @@ export function PianoRoll({
     rafRef.current = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(rafRef.current);
   }, [isPlaying, tempo]);
+
+  if (midis.length === 0) return null;
 
   // Background rows (alternating black/white key shading)
   const bgRows = [];

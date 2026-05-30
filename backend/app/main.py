@@ -1,6 +1,8 @@
 import json
+import logging
+import time
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
@@ -9,7 +11,23 @@ from .claude import generate_score
 from .config import settings
 from .schema import GenerateRequest, MusicScore
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)-8s %(name)s — %(message)s",
+    datefmt="%H:%M:%S",
+)
+log = logging.getLogger(__name__)
+
 app = FastAPI(title="Symphony AI")
+
+
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    t0 = time.perf_counter()
+    response = await call_next(request)
+    elapsed = (time.perf_counter() - t0) * 1000
+    log.info("%s %s → %d (%.0f ms)", request.method, request.url.path, response.status_code, elapsed)
+    return response
 
 app.add_middleware(
     CORSMiddleware,
