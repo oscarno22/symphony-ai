@@ -1,24 +1,21 @@
 import * as Tone from "tone";
 
-import type { MusicScore, Note, NoteDuration } from "./types";
+import type { MultiTrackScore, Note, NoteDuration, Track, TrackInstrument } from "./types";
 
 // ─── Instrument definitions ───────────────────────────────────────────────────
-
-export type InstrumentId = "synth" | "piano" | "strings" | "bells";
-
-export const INSTRUMENTS: Record<InstrumentId, { label: string }> = {
-  synth:   { label: "Synth" },
-  piano:   { label: "Piano" },
-  strings: { label: "Strings" },
-  bells:   { label: "Bells" },
-};
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyPoly = Tone.PolySynth<any>;
 
-function buildSynth(id: InstrumentId): AnyPoly {
+const TRACK_VOLUMES: Record<string, number> = {
+  melody: -4,
+  harmony: -16,
+  bass: -10,
+};
+
+function buildSynth(instrument: TrackInstrument, trackId: string): AnyPoly {
   let p: AnyPoly;
-  switch (id) {
+  switch (instrument) {
     case "piano":
       p = new Tone.PolySynth(Tone.FMSynth);
       p.set({
@@ -35,7 +32,7 @@ function buildSynth(id: InstrumentId): AnyPoly {
       p.set({
         harmonicity: 1.5,
         oscillator: { type: "sawtooth" },
-        envelope: { attack: 0.4, decay: 0.1, sustain: 0.9, release: 1.5 },
+        envelope: { attack: 0.5, decay: 0.1, sustain: 0.9, release: 2.0 },
         modulation: { type: "sine" },
         modulationEnvelope: { attack: 0.5, decay: 0.1, sustain: 1, release: 0.5 },
       });
@@ -51,29 +48,40 @@ function buildSynth(id: InstrumentId): AnyPoly {
         modulationEnvelope: { attack: 0.001, decay: 0.5, sustain: 0, release: 0.5 },
       });
       break;
-    default:
+    case "bass_synth":
+      p = new Tone.PolySynth(Tone.Synth);
+      p.set({
+        oscillator: { type: "sawtooth" },
+        envelope: { attack: 0.02, decay: 0.4, sustain: 0.7, release: 0.6 },
+      });
+      break;
+    default: // "synth"
       p = new Tone.PolySynth(Tone.Synth);
       p.set({
         oscillator: { type: "triangle" },
         envelope: { attack: 0.02, decay: 0.1, sustain: 0.5, release: 0.5 },
       });
   }
-  p.volume.value = -8;
+  p.volume.value = TRACK_VOLUMES[trackId] ?? -8;
   p.toDestination();
   return p;
 }
 
 // ─── Module state ─────────────────────────────────────────────────────────────
 
-let synth: AnyPoly | null = null;
-let currentInstrumentId: InstrumentId = "synth";
-let playStartToneTime: number | null = null;
+const _trackSynths = new Map<string, AnyPoly>();
+let _playStartToneTime: number | null = null;
 
-function getSynth(): AnyPoly {
-  if (!synth) {
-    synth = buildSynth(currentInstrumentId);
-  }
-  return synth;
+// instrument assigned to each track at meta time, used for lazy synth creation
+const _trackInstruments = new Map<string, TrackInstrument>();
+
+function getOrCreateSynth(trackId: string): AnyPoly {
+  const existing = _trackSynths.get(trackId);
+  if (existing) return existing;
+  const instrument = _trackInstruments.get(trackId) ?? "synth";
+  const s = buildSynth(instrument, trackId);
+  _trackSynths.set(trackId, s);
+  return s;
 }
 
 // ─── Duration helpers ─────────────────────────────────────────────────────────
@@ -86,11 +94,7 @@ const WHOLE_NOTE_FRACTION: Record<NoteDuration, number> = {
   sixteenth: 1 / 16,
 };
 
-function durationInSeconds(
-  note: Note,
-  tempo: number,
-  denominator: number,
-): number {
+function durationInSeconds(note: Note, tempo: number, denominator: number): number {
   const beats = WHOLE_NOTE_FRACTION[note.duration] * denominator;
   const adjusted = note.dotted ? beats * 1.5 : beats;
   return adjusted * (60 / tempo);
@@ -98,51 +102,49 @@ function durationInSeconds(
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 
-export function setInstrument(id: InstrumentId): void {
-  currentInstrumentId = id;
-  if (synth) {
-    synth.releaseAll();
-    synth.dispose();
-    synth = null;
+/** Register which instrument each track should use. Call this when meta arrives. */
+export function registerTracks(tracks: { id: string; instrument: TrackInstrument }[]): void {
+  for (const t of tracks) {
+    _trackInstruments.set(t.id, t.instrument);
   }
-  playStartToneTime = null;
 }
 
-export async function playScore(score: MusicScore): Promise<number> {
+export async function playMultiTrackScore(score: MultiTrackScore): Promise<number> {
   await Tone.start();
   stopPlayback();
 
-  const denominator = score.time_signature.denominator;
-  const tempo = score.tempo;
-  const s = getSynth();
+  const { tempo, time_signature: { denominator } } = score;
   const now = Tone.now() + 0.05;
-  playStartToneTime = now;
+  _playStartToneTime = now;
 
   let endTime = 0;
-  for (const note of score.notes) {
-    const startSec = note.start_beat * (60 / tempo);
-    const durSec = durationInSeconds(note, tempo, denominator);
-    if (note.pitch !== "rest") {
+  for (const track of score.tracks) {
+    _trackInstruments.set(track.id, track.instrument);
+    const s = getOrCreateSynth(track.id);
+    for (const note of track.notes) {
+      if (note.pitch === "rest") continue;
+      const startSec = note.start_beat * (60 / tempo);
+      const durSec = durationInSeconds(note, tempo, denominator);
       s.triggerAttackRelease(note.pitch, durSec, now + startSec);
+      endTime = Math.max(endTime, startSec + durSec);
     }
-    endTime = Math.max(endTime, startSec + durSec);
   }
 
   return endTime;
 }
 
 export function stopPlayback(): void {
-  if (synth) {
-    synth.releaseAll();
-    synth.dispose();
-    synth = null;
+  for (const [, s] of _trackSynths) {
+    s.releaseAll();
+    s.dispose();
   }
-  playStartToneTime = null;
+  _trackSynths.clear();
+  _playStartToneTime = null;
 }
 
 export function getPlayheadSeconds(): number | null {
-  if (playStartToneTime === null) return null;
-  return Math.max(0, Tone.now() - playStartToneTime);
+  if (_playStartToneTime === null) return null;
+  return Math.max(0, Tone.now() - _playStartToneTime);
 }
 
 export function primeAudioContext(): void {
@@ -151,13 +153,17 @@ export function primeAudioContext(): void {
 
 export async function preparePlayback(): Promise<number> {
   await Tone.start();
-  if (synth) synth.releaseAll();
+  for (const [, s] of _trackSynths) {
+    s.releaseAll();
+  }
   const startTime = Tone.now() + 0.1;
-  playStartToneTime = startTime;
+  _playStartToneTime = startTime;
   return startTime;
 }
 
-export function scheduleNote(
+/** Schedule a single note for a track. Used during streaming. */
+export function scheduleTrackNote(
+  trackId: string,
   note: Note,
   tempo: number,
   denominator: number,
@@ -168,6 +174,19 @@ export function scheduleNote(
   const durSec = durationInSeconds(note, tempo, denominator);
   const absTime = startToneTime + startSec;
   if (absTime > Tone.now()) {
-    getSynth().triggerAttackRelease(note.pitch, durSec, absTime);
+    getOrCreateSynth(trackId).triggerAttackRelease(note.pitch, durSec, absTime);
+  }
+}
+
+/** Schedule all future notes for a completed track. Used when track_complete arrives mid-stream. */
+export function scheduleCompletedTrack(
+  track: Track,
+  tempo: number,
+  denominator: number,
+  startToneTime: number,
+): void {
+  _trackInstruments.set(track.id, track.instrument);
+  for (const note of track.notes) {
+    scheduleTrackNote(track.id, note, tempo, denominator, startToneTime);
   }
 }

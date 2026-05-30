@@ -3,7 +3,7 @@
 import { useEffect, useRef } from "react";
 
 import { getPlayheadSeconds } from "@/lib/player";
-import type { MusicScore } from "@/lib/types";
+import type { MultiTrackScore } from "@/lib/types";
 
 const PX_PER_BEAT = 40;
 const PX_PER_SEMI = 12;
@@ -19,6 +19,12 @@ const DUR_FRAC: Record<string, number> = {
   whole: 1, half: 0.5, quarter: 0.25, eighth: 0.125, sixteenth: 0.0625,
 };
 
+const TRACK_COLORS: Record<string, string> = {
+  melody: "#818cf8",
+  harmony: "#34d399",
+  bass: "#f59e0b",
+};
+
 function parseMidi(pitch: string): number | null {
   if (pitch === "rest") return null;
   const m = pitch.match(/^([A-G])([#b]?)(-?\d+)$/);
@@ -27,10 +33,7 @@ function parseMidi(pitch: string): number | null {
   return (parseInt(m[3], 10) + 1) * 12 + pc;
 }
 
-function widthBeats(
-  note: { duration: string; dotted?: boolean },
-  denom: number,
-): number {
+function widthBeats(note: { duration: string; dotted?: boolean }, denom: number): number {
   const base = DUR_FRAC[note.duration] * denom;
   return note.dotted ? base * 1.5 : base;
 }
@@ -39,14 +42,17 @@ export function PianoRoll({
   score,
   isPlaying,
 }: {
-  score: MusicScore;
+  score: MultiTrackScore;
   isPlaying: boolean;
 }) {
   const playheadRef = useRef<SVGLineElement>(null);
   const rafRef = useRef<number>(0);
   const { tempo, time_signature: { numerator, denominator } } = score;
 
-  const midis = score.notes
+  // Collect all notes across all tracks for range + total beats
+  const allNotes = score.tracks.flatMap((t) => t.notes.map((n) => ({ ...n, trackId: t.id })));
+
+  const midis = allNotes
     .map((n) => parseMidi(n.pitch))
     .filter((m): m is number => m !== null);
 
@@ -55,7 +61,7 @@ export function PianoRoll({
   const numSemis = maxMidi - minMidi + 1;
 
   let totalBeats = 0;
-  for (const n of score.notes) {
+  for (const n of allNotes) {
     const end = n.start_beat + widthBeats(n, denominator);
     if (end > totalBeats) totalBeats = end;
   }
@@ -92,7 +98,6 @@ export function PianoRoll({
 
   if (midis.length === 0) return null;
 
-  // Background rows (alternating black/white key shading)
   const bgRows = [];
   for (let midi = minMidi; midi <= maxMidi; midi++) {
     const pc = ((midi % 12) + 12) % 12;
@@ -124,7 +129,6 @@ export function PianoRoll({
     }
   }
 
-  // Beat and measure grid lines
   const gridLines = [];
   for (let b = 0; b <= totalBeats; b++) {
     const x = LEFT_MARGIN + b * PX_PER_BEAT;
@@ -142,27 +146,36 @@ export function PianoRoll({
     );
   }
 
-  // Note rectangles
-  const noteRects = score.notes
-    .filter((n) => n.pitch !== "rest")
-    .map((n, i) => {
-      const midi = parseMidi(n.pitch);
-      if (midi === null) return null;
-      const x = LEFT_MARGIN + n.start_beat * PX_PER_BEAT;
-      const w = Math.max(3, widthBeats(n, denominator) * PX_PER_BEAT - 2);
-      const y = midiY(midi) + 1;
-      return (
-        <rect
-          key={i}
-          x={x}
-          y={y}
-          width={w}
-          height={PX_PER_SEMI - 2}
-          rx={NOTE_RADIUS}
-          fill="#818cf8"
-        />
-      );
-    });
+  // Render tracks back-to-front: bass → harmony → melody (melody on top)
+  const trackOrder = ["bass", "harmony", "melody"];
+  const sortedTracks = [...score.tracks].sort(
+    (a, b) => trackOrder.indexOf(a.id) - trackOrder.indexOf(b.id),
+  );
+
+  const noteRects = sortedTracks.flatMap((track) => {
+    const color = TRACK_COLORS[track.id] ?? "#818cf8";
+    return track.notes
+      .filter((n) => n.pitch !== "rest")
+      .map((n, i) => {
+        const midi = parseMidi(n.pitch);
+        if (midi === null) return null;
+        const x = LEFT_MARGIN + n.start_beat * PX_PER_BEAT;
+        const w = Math.max(3, widthBeats(n, denominator) * PX_PER_BEAT - 2);
+        const y = midiY(midi) + 1;
+        return (
+          <rect
+            key={`${track.id}-${i}`}
+            x={x}
+            y={y}
+            width={w}
+            height={PX_PER_SEMI - 2}
+            rx={NOTE_RADIUS}
+            fill={color}
+            opacity={track.id === "harmony" ? 0.7 : 1}
+          />
+        );
+      });
+  });
 
   return (
     <div

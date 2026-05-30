@@ -51,10 +51,10 @@ def generate(req: GenerateRequest) -> MusicScore:
 
 
 @app.post("/stream")
-def stream(req: GenerateRequest) -> StreamingResponse:
-    def generate():
+async def stream(req: GenerateRequest) -> StreamingResponse:
+    async def generate():
         try:
-            for event_type, data in claude.stream_score(req.prompt):
+            async for event_type, data in claude.orchestrate_multi_track(req.prompt):
                 yield f"event: {event_type}\ndata: {json.dumps(data)}\n\n"
         except Exception as exc:
             yield f"event: error\ndata: {json.dumps({'detail': str(exc)})}\n\n"

@@ -17,10 +17,19 @@ export type TimeSignature = {
   denominator: number;
 };
 
-export type MusicScore = {
+export type TrackId = "melody" | "harmony" | "bass";
+export type TrackInstrument = "synth" | "piano" | "strings" | "bells" | "bass_synth";
+
+export type Track = {
+  id: TrackId;
+  instrument: TrackInstrument;
+  notes: Note[];
+};
+
+export type MultiTrackScore = {
   title: string;
   tempo: number;
   time_signature: TimeSignature;
   key_signature: string;
-  notes: Note[];
+  tracks: Track[];
 };
