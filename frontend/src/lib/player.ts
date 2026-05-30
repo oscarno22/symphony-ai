@@ -132,7 +132,11 @@ export async function playScore(score: MusicScore): Promise<number> {
 }
 
 export function stopPlayback(): void {
-  if (synth) synth.releaseAll();
+  if (synth) {
+    synth.releaseAll();
+    synth.dispose();
+    synth = null;
+  }
   playStartToneTime = null;
 }
 

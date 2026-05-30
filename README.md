@@ -1,6 +1,6 @@
 # Symphony AI
 
-AI-powered music generation. Describe a piece in natural language; Claude composes it as structured JSON; the browser plays it via Tone.js.
+AI-powered music generation. Describe a piece in natural language; Claude composes it as structured JSON; the browser plays it via Tone.js with a live piano roll.
 
 ## Stack
 
@@ -41,31 +41,43 @@ cd frontend
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000), enter a prompt (e.g. *"A slow melancholic 8-bar melody in A minor"*), click **Generate**, then **Play**.
+Open [http://localhost:3000](http://localhost:3000), enter a prompt (e.g. *"A slow melancholic 8-bar melody in A minor"*) and click **Generate**. Playback starts automatically as notes stream in.
 
 ## How it works
 
-1. Frontend `POST /generate` with `{ prompt }`.
-2. Backend calls Claude with a tool definition derived from the `MusicScore` Pydantic model. `tool_choice` forces Claude to return structured input matching the schema.
-3. Pydantic validates the tool input and returns a `MusicScore` JSON: title, tempo, time signature, key, and a list of notes (`pitch`, `duration`, `start_beat`, optional `dotted`).
-4. Frontend feeds the score into a Tone.js `PolySynth`, scheduling each note at `start_beat × (60 / tempo)` seconds.
+1. Frontend `POST /stream` with `{ prompt }` and opens a Server-Sent Events connection.
+2. Backend calls Claude with `tool_choice` forced to `render_music_score`. The tool's `input_schema` is generated directly from the `MusicScore` Pydantic model.
+3. As Claude streams the tool input JSON, the backend parses it incrementally — emitting a `meta` event (title, tempo, key, time signature) as soon as those fields arrive, then one `note` event per complete note object.
+4. The frontend starts Tone.js playback immediately on the `meta` event and schedules each note as it arrives, so music begins before the full score is generated.
+5. A piano roll renders in real time alongside playback, with an animated red playhead.
+
+The `/generate` endpoint also exists for non-streaming use (returns the full `MusicScore` JSON in one response).
+
+## Features
+
+- **Progressive streaming** — playback starts mid-generation, not after
+- **Piano roll** — scrollable SVG visualization with black/white key shading, measure grid, and animated playhead
+- **Instrument selection** — Synth, Piano, Strings, Bells (each a differently-configured `PolySynth`)
+- **Stop** — cancels both the UI playhead and all Web Audio scheduled events immediately
 
 ## Project structure
 
 ```
 backend/
   app/
-    schema.py    # Pydantic music model
-    claude.py    # Anthropic client + tool definition
-    config.py    # pydantic-settings (.env loader)
-    main.py      # FastAPI app, /health, /generate
+    schema.py      # Pydantic MusicScore / Note models (single source of truth)
+    claude.py      # Anthropic client, tool definition, streaming note parser
+    config.py      # pydantic-settings (.env loader)
+    main.py        # FastAPI app — /health, /generate, /stream (SSE)
 frontend/
   src/
-    app/page.tsx # Prompt UI, Generate / Play / Stop
+    app/page.tsx         # Prompt UI, Generate / Play / Stop, instrument picker
+    components/
+      piano-roll.tsx     # Animated SVG piano roll
     lib/
-      api.ts     # fetch wrapper
-      player.ts  # Tone.js scheduling
-      types.ts   # mirror of MusicScore
+      api.ts             # fetch wrappers (generateScore, streamScore async generator)
+      player.ts          # Tone.js scheduling, instrument management, playhead
+      types.ts           # TypeScript mirror of MusicScore / Note
 ```
 
 ## Roadmap
