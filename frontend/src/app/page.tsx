@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 
+import { PianoRoll } from "@/components/piano-roll";
 import { generateScore } from "@/lib/api";
 import { playScore, stopPlayback } from "@/lib/player";
 import type { MusicScore } from "@/lib/types";
@@ -10,13 +11,18 @@ export default function Home() {
   const [prompt, setPrompt] = useState("");
   const [score, setScore] = useState<MusicScore | null>(null);
   const [loading, setLoading] = useState(false);
+  const [isPlaying, setIsPlaying] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const playTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   async function onGenerate() {
     if (!prompt.trim()) return;
     setLoading(true);
     setError(null);
     setScore(null);
+    stopPlayback();
+    setIsPlaying(false);
+    if (playTimeoutRef.current) clearTimeout(playTimeoutRef.current);
     try {
       const result = await generateScore(prompt);
       setScore(result);
@@ -29,11 +35,24 @@ export default function Home() {
 
   async function onPlay() {
     if (!score) return;
+    if (playTimeoutRef.current) clearTimeout(playTimeoutRef.current);
     try {
-      await playScore(score);
+      setIsPlaying(true);
+      const endTime = await playScore(score);
+      playTimeoutRef.current = setTimeout(
+        () => setIsPlaying(false),
+        endTime * 1000 + 200,
+      );
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
+      setIsPlaying(false);
     }
+  }
+
+  function onStop() {
+    if (playTimeoutRef.current) clearTimeout(playTimeoutRef.current);
+    stopPlayback();
+    setIsPlaying(false);
   }
 
   return (
@@ -64,14 +83,14 @@ export default function Home() {
         </button>
         <button
           onClick={onPlay}
-          disabled={!score || loading}
+          disabled={!score || loading || isPlaying}
           className="px-4 py-2 rounded-lg bg-blue-600 text-white font-medium disabled:opacity-50"
         >
           Play
         </button>
         <button
-          onClick={stopPlayback}
-          disabled={!score}
+          onClick={onStop}
+          disabled={!score || !isPlaying}
           className="px-4 py-2 rounded-lg border border-zinc-300 dark:border-zinc-700 disabled:opacity-50"
         >
           Stop
@@ -85,16 +104,16 @@ export default function Home() {
       )}
 
       {score && (
-        <section className="rounded-lg border border-zinc-200 dark:border-zinc-800 p-4">
-          <h2 className="text-xl font-semibold">{score.title}</h2>
-          <p className="text-sm text-zinc-500 mt-1">
-            {score.key_signature} · {score.tempo} BPM ·{" "}
-            {score.time_signature.numerator}/{score.time_signature.denominator} ·{" "}
-            {score.notes.length} notes
-          </p>
-          <pre className="mt-3 p-3 bg-zinc-100 dark:bg-zinc-900 rounded text-xs overflow-auto max-h-96">
-            {JSON.stringify(score, null, 2)}
-          </pre>
+        <section className="flex flex-col gap-3">
+          <div>
+            <h2 className="text-xl font-semibold">{score.title}</h2>
+            <p className="text-sm text-zinc-500 mt-1">
+              {score.key_signature} · {score.tempo} BPM ·{" "}
+              {score.time_signature.numerator}/{score.time_signature.denominator}{" "}
+              · {score.notes.length} notes
+            </p>
+          </div>
+          <PianoRoll score={score} isPlaying={isPlaying} />
         </section>
       )}
     </main>

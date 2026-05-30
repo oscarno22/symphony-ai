@@ -11,6 +11,7 @@ const WHOLE_NOTE_FRACTION: Record<NoteDuration, number> = {
 };
 
 let synth: Tone.PolySynth | null = null;
+let playStartToneTime: number | null = null;
 
 function getSynth(): Tone.PolySynth {
   if (!synth) {
@@ -40,15 +41,16 @@ export async function playScore(score: MusicScore): Promise<number> {
 
   const denominator = score.time_signature.denominator;
   const tempo = score.tempo;
-  const synth = getSynth();
+  const s = getSynth();
   const now = Tone.now() + 0.05;
+  playStartToneTime = now;
 
   let endTime = 0;
   for (const note of score.notes) {
     const startSec = startInSeconds(note, tempo);
     const durSec = durationInSeconds(note, tempo, denominator);
     if (note.pitch !== "rest") {
-      synth.triggerAttackRelease(note.pitch, durSec, now + startSec);
+      s.triggerAttackRelease(note.pitch, durSec, now + startSec);
     }
     endTime = Math.max(endTime, startSec + durSec);
   }
@@ -60,4 +62,10 @@ export function stopPlayback(): void {
   if (synth) {
     synth.releaseAll();
   }
+  playStartToneTime = null;
+}
+
+export function getPlayheadSeconds(): number | null {
+  if (playStartToneTime === null) return null;
+  return Math.max(0, Tone.now() - playStartToneTime);
 }
