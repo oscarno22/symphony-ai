@@ -5,11 +5,14 @@ import { useRef, useState } from "react";
 import { PianoRoll } from "@/components/piano-roll";
 import { streamScore } from "@/lib/api";
 import {
+  INSTRUMENTS,
+  type InstrumentId,
   getPlayheadSeconds,
   playScore,
   preparePlayback,
   primeAudioContext,
   scheduleNote,
+  setInstrument,
   stopPlayback,
 } from "@/lib/player";
 import type { MusicScore } from "@/lib/types";
@@ -28,6 +31,7 @@ export default function Home() {
   const [score, setScore] = useState<MusicScore | null>(null);
   const [loading, setLoading] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [instrument, setInstrumentState] = useState<InstrumentId>("synth");
   const [error, setError] = useState<string | null>(null);
   const playTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -113,6 +117,13 @@ export default function Home() {
     setIsPlaying(false);
   }
 
+  function onInstrumentChange(id: InstrumentId) {
+    setInstrument(id);
+    setInstrumentState(id);
+    clearPlayTimeout();
+    setIsPlaying(false);
+  }
+
   return (
     <main className="flex flex-1 flex-col w-full max-w-3xl mx-auto px-6 py-12 gap-6">
       <header>
@@ -153,6 +164,25 @@ export default function Home() {
         >
           Stop
         </button>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className="text-xs text-zinc-500 mr-1">Instrument</span>
+        {(Object.entries(INSTRUMENTS) as [InstrumentId, { label: string }][]).map(
+          ([id, { label }]) => (
+            <button
+              key={id}
+              onClick={() => onInstrumentChange(id)}
+              className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
+                instrument === id
+                  ? "bg-indigo-600 text-white"
+                  : "border border-zinc-300 dark:border-zinc-700 text-zinc-500 dark:text-zinc-400 hover:border-zinc-500 dark:hover:border-zinc-500"
+              }`}
+            >
+              {label}
+            </button>
+          ),
+        )}
       </div>
 
       {error && (
